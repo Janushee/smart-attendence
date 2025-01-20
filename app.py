@@ -115,8 +115,8 @@ def attendance():
                 # Save attendance to file
                 if attendance_data:
                     pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-                return render_template('attendance.html', success="Attendance from uploaded video recorded successfully!")
-
+                # Redirect to view attendance
+                return redirect(url_for('view_attendance'))
         # If capturing live from camera
         elif 'capture' in request.form:
             print("Attempting to open camera...")
@@ -135,6 +135,24 @@ def attendance():
             return render_template('attendance.html', success="Live attendance recorded successfully!")
 
     return render_template('attendance.html')
+
+# Route: View Attendance
+@app.route('/view-attendance')
+def view_attendance():
+    try:
+        # Load attendance data from CSV
+        if os.path.exists(ATTENDANCE_FILE):
+            # Ensure proper headers while reading
+            attendance_data = pd.read_csv(ATTENDANCE_FILE, header=None, names=["Timestamp", "Name"])
+            print('attendance_data', attendance_data)
+            records = attendance_data.to_dict(orient='records')  # Convert to list of dictionaries
+        else:
+            records = []  # Empty if the file doesn't exist
+    except Exception as e:
+        print(f"Error loading attendance: {e}")
+        records = []
+
+    return render_template('view_attendance.html', records=records)
 
 
 import hashlib
