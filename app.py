@@ -244,10 +244,10 @@ def process_video_or_camera_feed(cap, known_encodings, known_names):
             start_time = time.time()  # Reset the timer
 
         # Display the padded frame
-        cv2.namedWindow('Attendance', cv2.WINDOW_NORMAL)  # Make the window resizable
-        cv2.resizeWindow('Attendance', target_width, target_height)
-        cv2.imshow('Attendance', padded_frame)
-        if cv2.waitKey(1) & 0xFF == 27:  # ESC key to stop
+        # cv2.namedWindow('Attendance', cv2.WINDOW_NORMAL)  # Make the window resizable
+        # cv2.resizeWindow('Attendance', target_width, target_height)
+        # cv2.imshow('Attendance', padded_frame)
+        # if cv2.waitKey(1) & 0xFF == 27:  # ESC key to stop
             break
 
     cv2.destroyAllWindows()
