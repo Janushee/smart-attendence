@@ -238,17 +238,17 @@ def process_video_or_camera_feed(cap, known_encodings, known_names):
 
 
 
-def restart_flask_server():
-    time.sleep(1)  # Allow the current request to finish
-    print("Restarting Flask server...")
-    os.execv(sys.executable, ['python'] + sys.argv)
+# def restart_flask_server():
+#     time.sleep(1)  # Allow the current request to finish
+#     print("Restarting Flask server...")
+#     os.execv(sys.executable, ['python'] + sys.argv)
 
-@app.after_request
-def reload_app(response):
-    if request.method == 'POST' and request.endpoint in ['attendance', 'register']:
-        print("Scheduling Flask server restart...")
-        threading.Thread(target=restart_flask_server).start()
-    return response
+# @app.after_request
+# def reload_app(response):
+#     if request.method == 'POST' and request.endpoint in ['attendance', 'register']:
+#         print("Scheduling Flask server restart...")
+#         threading.Thread(target=restart_flask_server).start()
+#     return response
 
 
 
@@ -256,3 +256,5 @@ def reload_app(response):
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
