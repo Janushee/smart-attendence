@@ -12,18 +12,18 @@
             <div class="text-center">
                 <h5 class="text-muted">Options:</h5>
                 <!-- Live Camera Feed -->
-                <div id="cameraContainer" class="mt-3">
-                    <video id="camera" autoplay playsinline width="100%" style="border: 1px solid #ccc;"></video>
+                <div id="cameraContainer" class="mt-3 d-flex flex-column align-items-center">
+                    <video id="camera" autoplay playsinline width="200" height="200" style="border: 1px solid #ccc;"></video>
                     <canvas id="canvas" style="display: none;"></canvas>
-                    <button type="button" id="captureButton" class="btn btn-lg btn-success mt-2">
+                    <button type="button" id="captureButton" class="btn btn-lg btn-success mt-3">
                         <i class="fas fa-camera"></i> Capture Using Camera
                     </button>
                 </div>
-                <h6 class="text-muted mt-3">OR</h6>
+                <!-- <h6 class="text-muted mt-3">OR</h6>
                 <input type="file" name="uploaded_image" accept="image/*" class="form-control mt-2">
                 <button type="submit" class="btn btn-lg btn-primary mt-2">
                     <i class="fas fa-upload"></i> Upload Image
-                </button>
+                </button> -->
             </div>
             <input type="hidden" name="captured_image" id="capturedImage">
         </form>
@@ -65,8 +65,8 @@
     captureButton.addEventListener('click', function (event) {
         event.preventDefault(); // Prevent form submission
         const context = canvas.getContext('2d');
-        canvas.width = camera.videoWidth;
-        canvas.height = camera.videoHeight;
+        canvas.width = 200; // Set the width to 200px
+        canvas.height = 200; // Set the height to 200px
         context.drawImage(camera, 0, 0, canvas.width, canvas.height);
         const imageData = canvas.toDataURL('image/jpeg'); // Convert canvas to Base64
         capturedImageInput.value = imageData; // Set hidden input value

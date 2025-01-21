@@ -3,24 +3,26 @@
 <div class="container mt-5">
     <div class="card shadow p-4">
         <h2 class="text-center text-primary">Record Attendance</h2>
-        <p class="text-center text-secondary">Choose an option below to record attendance:</p>
-        <form method="POST" enctype="multipart/form-data" class="mt-4" id="attendanceForm">
-            <div class="text-center">
-                <h5 class="text-muted">Options:</h5>
+        <p class="text-center text-secondary">Capture live attendance using the camera:</p>
+        <form method="POST" class="mt-4" id="attendanceForm">
+            <div class="d-flex flex-column align-items-center">
+                <h5 class="text-muted mb-4">Options:</h5>
                 <!-- Live Camera Feed -->
-                <div id="cameraContainer" class="mt-3">
-                    <video id="camera" autoplay playsinline width="100%" style="border: 1px solid #ccc;"></video>
+                <div id="cameraContainer" class="d-flex flex-column align-items-center">
+                    <video id="camera" autoplay playsinline width="200" height="200" style="border: 1px solid #ccc;"></video>
                     <canvas id="canvas" style="display: none;"></canvas>
-                    <button type="button" id="captureButton" class="btn btn-lg btn-success mt-2">
+                    <button type="button" id="captureButton" class="btn btn-lg btn-success mt-3">
                         <i class="fas fa-camera"></i> Capture Live Attendance
                     </button>
                 </div>
-                <h6 class="text-muted mt-3">OR</h6>
-                <!-- Input for uploading a video -->
+                <!-- Commented upload video option -->
+                
+                <!-- <h6 class="text-muted mt-3">OR</h6>
                 <input type="file" name="uploaded_video" accept="video/*" class="form-control mt-3">
                 <button type="submit" class="btn btn-lg btn-primary mt-3">
                     <i class="fas fa-upload"></i> Upload Video
-                </button>
+                </button>  -->
+            
             </div>
             <input type="hidden" name="captured_image" id="capturedImage">
         </form>
@@ -64,8 +66,8 @@
     captureButton.addEventListener('click', function (event) {
         event.preventDefault(); // Prevent form submission
         const context = canvas.getContext('2d');
-        canvas.width = camera.videoWidth;
-        canvas.height = camera.videoHeight;
+        canvas.width = 200; // Set the width to 150px
+        canvas.height = 200; // Set the height to 150px
         context.drawImage(camera, 0, 0, canvas.width, canvas.height);
         const imageData = canvas.toDataURL('image/jpeg'); // Convert canvas to base64
         capturedImageInput.value = imageData; // Set hidden input value
@@ -73,12 +75,11 @@
         attendanceForm.submit(); // Automatically submit the form after capturing
     });
 
-    // Prevent form submission without a captured image or uploaded video
+    // Prevent form submission without a captured image
     attendanceForm.addEventListener('submit', function (event) {
-        const uploadedVideo = attendanceForm.querySelector('input[name="uploaded_video"]').files.length;
-        if (!capturedImageInput.value && !uploadedVideo) {
+        if (!capturedImageInput.value) {
             event.preventDefault();
-            alert('Please capture an image or upload a video before submitting.');
+            alert('Please capture an image before submitting.');
         }
     });
 </script>
