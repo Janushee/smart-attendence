@@ -6,8 +6,9 @@
         <table class="table table-bordered table-hover mt-3">
             <thead>
                 <tr>
-                    <th>Timestamp</th>
+                    <th>Timestamp (UTC)</th>
                     <th>Name</th>
+                    <th>Method</th> <!-- Added the new "Method" column -->
                 </tr>
             </thead>
             <tbody>
@@ -15,6 +16,7 @@
                 <tr>
                     <td>{{ record['Timestamp'] }}</td>
                     <td>{{ record['Name'] }}</td>
+                    <td>{{ record['Method'] }}</td> <!-- Display the "Method" column -->
                 </tr>
                 {% endfor %}
             </tbody>
@@ -26,4 +28,3 @@
         {% endif %}
     </div>
 {% endblock %}
-

@@ -154,8 +154,13 @@ def attendance():
                         best_match_index = np.argmin(distances)
                         name = known_names[best_match_index]
                         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        attendance_data.append({'Timestamp': current_time, 'Name': name})
-                        flash(f"Attendance recorded for {name}.", "success")
+                        attendance_data.append({
+                            'Timestamp': current_time,
+                            'Name': name,
+                            'Method': 'Attendance via System Camera'  # Add "Method" column
+                        })
+                        flash(f"Attendance recorded for {name} via System CV.", "success")
+
 
                 # Save attendance to the file
                 if attendance_data:
@@ -217,7 +222,7 @@ def view_attendance():
         # Load attendance data from CSV
         if os.path.exists(ATTENDANCE_FILE):
             # Ensure proper headers while reading
-            attendance_data = pd.read_csv(ATTENDANCE_FILE, header=None, names=["Timestamp", "Name"])
+            attendance_data = pd.read_csv(ATTENDANCE_FILE, header=None, names=["Timestamp", "Name", "Method"])
             print('attendance_data', attendance_data)
             records = attendance_data.to_dict(orient='records')  # Convert to list of dictionaries
         else:
