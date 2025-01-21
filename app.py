@@ -39,56 +39,83 @@ def index():
     return render_template('index.html')
 
 # Route: Register
-# Route: Register
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        name = request.form['name']
+        name = request.form.get('name')
+        if not name:
+            flash("Please enter a name.", "danger")
+            return redirect(url_for('register'))
+
         captured_image = request.form.get('captured_image')  # Get Base64 image from form
 
         if captured_image:
-            # Decode the Base64 image and save it as a file
-            image_data = base64.b64decode(captured_image.split(',')[1])
-            image_path = os.path.join(FACES_DIR, f"{name}.jpg")
-            with open(image_path, 'wb') as f:
-                f.write(image_data)
+            try:
+                # Decode the Base64 image but do not save it yet
+                image_data = base64.b64decode(captured_image.split(',')[1])
 
-            # Process the saved image
-            frame = face_recognition.load_image_file(image_path)
-            encodings = face_recognition.face_encodings(frame)
+                # Load the image into memory to check its validity
+                nparr = np.frombuffer(image_data, np.uint8)
+                temp_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-            if encodings:
-                encoding = encodings[0]
-                encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
-                np.save(encoding_path, encoding)
-                flash(f"Face registered for {name}!", "success")
-                return redirect(url_for('index'))
-            else:
-                flash("No face detected in the captured image.", "danger")
+                if temp_image is None:  # Check if image decoding failed
+                    flash("Error: Captured image is invalid or unavailable.", "danger")
+                    return redirect(url_for('register'))
+
+                # Process the valid image
+                frame = cv2.cvtColor(temp_image, cv2.COLOR_BGR2RGB)
+                encodings = face_recognition.face_encodings(frame)
+
+                if encodings:
+                    encoding = encodings[0]
+                    image_path = os.path.join(FACES_DIR, f"{name}.jpg")
+                    encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
+
+                    # Save the image and encoding only if a face is detected
+                    with open(image_path, 'wb') as f:
+                        f.write(image_data)
+                    np.save(encoding_path, encoding)
+
+                    flash(f"Face registered for {name}!", "success")
+                    return redirect(url_for('index'))
+                else:
+                    flash("No face detected in the captured image.", "danger")
+                    return redirect(url_for('register'))
+            except Exception as e:
+                flash(f"Error processing the captured image: {e}", "danger")
                 return redirect(url_for('register'))
 
         # Handle uploaded image
         if 'uploaded_image' in request.files and request.files['uploaded_image'].filename != '':
             uploaded_file = request.files['uploaded_image']
-            if uploaded_file:
-                image_path = os.path.join(FACES_DIR, f"{name}.jpg")
-                encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
-                uploaded_file.save(image_path)
+            try:
+                if uploaded_file:
+                    # Temporarily load the image into memory to validate it
+                    image_path = os.path.join(FACES_DIR, f"{name}.jpg")
+                    uploaded_file.save(image_path)
 
-                frame = face_recognition.load_image_file(image_path)
-                encodings = face_recognition.face_encodings(frame)
+                    frame = face_recognition.load_image_file(image_path)
+                    encodings = face_recognition.face_encodings(frame)
 
-                if encodings:
-                    encoding = encodings[0]
-                    np.save(encoding_path, encoding)
-                    flash(f"Face registered for {name}!", "success")
-                    return redirect(url_for('index'))
-                else:
-                    flash("No face detected in the uploaded image.", "danger")
-                    return redirect(url_for('register'))
+                    if encodings:
+                        encoding = encodings[0]
+                        encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
+                        np.save(encoding_path, encoding)
+                        flash(f"Face registered for {name}!", "success")
+                        return redirect(url_for('index'))
+                    else:
+                        os.remove(image_path)  # Remove the invalid file
+                        flash("No face detected in the uploaded image.", "danger")
+                        return redirect(url_for('register'))
+            except Exception as e:
+                flash(f"Error processing the uploaded image: {e}", "danger")
+                return redirect(url_for('register'))
+
+        # If no valid input is provided
+        flash("Please capture an image or upload one.", "danger")
+        return redirect(url_for('register'))
 
     return render_template('register.html')
-
 
 
 
@@ -101,48 +128,71 @@ def attendance():
         global known_encodings, known_names
         known_encodings, known_names = load_encodings(FACES_DIR)
 
-        # If a video is uploaded
+        # Handle the captured image
+        captured_image = request.form.get('captured_image')
+        if captured_image:
+            # Decode the Base64 image and save it as a file
+            try:
+                image_data = base64.b64decode(captured_image.split(',')[1])
+                temp_image_path = os.path.join(FACES_DIR, "temp.jpg")
+                with open(temp_image_path, 'wb') as f:
+                    f.write(image_data)
+
+                # Process the saved image
+                frame = face_recognition.load_image_file(temp_image_path)
+                face_locations = face_recognition.face_locations(frame)
+                face_encodings = face_recognition.face_encodings(frame, face_locations)
+
+                if not face_encodings:
+                    flash("No face detected in the captured image.", "danger")
+                    return redirect(url_for('attendance'))
+
+                attendance_data = []
+                for face_encoding in face_encodings:
+                    distances = face_recognition.face_distance(known_encodings, face_encoding)
+                    if any(distances <= 0.6):  # Threshold for recognizing faces
+                        best_match_index = np.argmin(distances)
+                        name = known_names[best_match_index]
+                        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        attendance_data.append({'Timestamp': current_time, 'Name': name})
+                        flash(f"Attendance recorded for {name}.", "success")
+
+                # Save attendance to the file
+                if attendance_data:
+                    pd.DataFrame(attendance_data).to_csv(
+                        ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE)
+                    )
+
+                return redirect(url_for('view_attendance'))
+            except Exception as e:
+                flash(f"Error processing the captured image: {e}", "danger")
+                return redirect(url_for('attendance'))
+
+        # Handle uploaded video
         if 'uploaded_video' in request.files and request.files['uploaded_video'].filename != '':
             uploaded_file = request.files['uploaded_video']
             if uploaded_file:
                 video_path = os.path.join(FACES_DIR, 'uploaded_video.mp4')
                 uploaded_file.save(video_path)
 
-                # Flash message: Video uploaded successfully
                 flash("Uploaded the video successfully.", "info")
-
                 cap = cv2.VideoCapture(video_path)
                 attendance_data = process_video_or_camera_feed(cap, known_encodings, known_names)
                 cap.release()
 
-                # Save attendance to file
+                # Save attendance to the file
                 if attendance_data:
-                    pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-                # Flash message: Processing completed
+                    pd.DataFrame(attendance_data).to_csv(
+                        ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE)
+                    )
                 flash("Processing completed. Attendance recorded.", "success")
-                # Redirect to view attendance
                 return redirect(url_for('view_attendance'))
-        # Handle captured image from the camera
-        captured_image = request.form.get('captured_image')  # Get Base64 image from form
-        if captured_image:
-            # Decode Base64 and process
-            image_data = base64.b64decode(captured_image.split(',')[1])
-            temp_image_path = os.path.join(FACES_DIR, "temp.jpg")
-            with open(temp_image_path, 'wb') as f:
-                f.write(image_data)
 
-            frame = face_recognition.load_image_file(temp_image_path)
-            attendance_data = process_frame(frame, known_encodings, known_names)
-
-            if attendance_data:
-                pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-                flash("Live attendance recorded successfully!", "success")
-            else:
-                flash("No face detected in the captured image.", "danger")
-
-            return redirect(url_for('view_attendance'))
+        flash("No image or video was provided for attendance.", "danger")
+        return redirect(url_for('attendance'))
 
     return render_template('attendance.html')
+
 
 # Process a single frame for attendance
 def process_frame(frame, known_encodings, known_names):
