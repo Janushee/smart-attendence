@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, flash
 import cv2
 import face_recognition
 import numpy as np
@@ -9,8 +9,10 @@ import os
 import sys
 import threading
 import time
+import base64
 
 app = Flask(__name__)
+app.secret_key = 'your_secret_key'
 
 # Directories for storing data
 FACES_DIR = 'faces'
@@ -37,12 +39,35 @@ def index():
     return render_template('index.html')
 
 # Route: Register
+# Route: Register
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         name = request.form['name']
+        captured_image = request.form.get('captured_image')  # Get Base64 image from form
 
-        # If an image is uploaded
+        if captured_image:
+            # Decode the Base64 image and save it as a file
+            image_data = base64.b64decode(captured_image.split(',')[1])
+            image_path = os.path.join(FACES_DIR, f"{name}.jpg")
+            with open(image_path, 'wb') as f:
+                f.write(image_data)
+
+            # Process the saved image
+            frame = face_recognition.load_image_file(image_path)
+            encodings = face_recognition.face_encodings(frame)
+
+            if encodings:
+                encoding = encodings[0]
+                encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
+                np.save(encoding_path, encoding)
+                flash(f"Face registered for {name}!", "success")
+                return redirect(url_for('index'))
+            else:
+                flash("No face detected in the captured image.", "danger")
+                return redirect(url_for('register'))
+
+        # Handle uploaded image
         if 'uploaded_image' in request.files and request.files['uploaded_image'].filename != '':
             uploaded_file = request.files['uploaded_image']
             if uploaded_file:
@@ -56,39 +81,14 @@ def register():
                 if encodings:
                     encoding = encodings[0]
                     np.save(encoding_path, encoding)
-                    return render_template('index.html', success=f"Face registered for {name}!")
+                    flash(f"Face registered for {name}!", "success")
+                    return redirect(url_for('index'))
                 else:
-                    return render_template('register.html', error="No face detected in the uploaded image.")
-
-        # If the user chooses to capture an image from the camera
-        elif 'capture' in request.form:
-            cap = cv2.VideoCapture(0)
-
-            if not cap.isOpened():
-                return render_template('register.html', error="Camera could not be opened.")
-
-            saved = False
-            while not saved:
-                ret, frame = cap.read()
-                if not ret:
-                    continue
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                encodings = face_recognition.face_encodings(rgb_frame)
-
-                if encodings:
-                    encoding = encodings[0]
-                    face_image_path = os.path.join(FACES_DIR, f"{name}.jpg")
-                    encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
-                    cv2.imwrite(face_image_path, frame)
-                    np.save(encoding_path, encoding)
-                    saved = True
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-            return render_template('index.html', success=f"Face registered for {name}!")
+                    flash("No face detected in the uploaded image.", "danger")
+                    return redirect(url_for('register'))
 
     return render_template('register.html')
+
 
 
 
@@ -108,6 +108,9 @@ def attendance():
                 video_path = os.path.join(FACES_DIR, 'uploaded_video.mp4')
                 uploaded_file.save(video_path)
 
+                # Flash message: Video uploaded successfully
+                flash("Uploaded the video successfully.", "info")
+
                 cap = cv2.VideoCapture(video_path)
                 attendance_data = process_video_or_camera_feed(cap, known_encodings, known_names)
                 cap.release()
@@ -115,26 +118,47 @@ def attendance():
                 # Save attendance to file
                 if attendance_data:
                     pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
+                # Flash message: Processing completed
+                flash("Processing completed. Attendance recorded.", "success")
                 # Redirect to view attendance
                 return redirect(url_for('view_attendance'))
-        # If capturing live from camera
-        elif 'capture' in request.form:
-            print("Attempting to open camera...")
-            cap = cv2.VideoCapture(0)  # Default camera index
-            if not cap.isOpened():
-                print("Failed to open camera.")
-                return render_template('attendance.html', error="Camera could not be opened.")
-            print("Camera opened successfully.")
+        # Handle captured image from the camera
+        captured_image = request.form.get('captured_image')  # Get Base64 image from form
+        if captured_image:
+            # Decode Base64 and process
+            image_data = base64.b64decode(captured_image.split(',')[1])
+            temp_image_path = os.path.join(FACES_DIR, "temp.jpg")
+            with open(temp_image_path, 'wb') as f:
+                f.write(image_data)
 
-            attendance_data = process_video_or_camera_feed(cap, known_encodings, known_names)
-            cap.release()
+            frame = face_recognition.load_image_file(temp_image_path)
+            attendance_data = process_frame(frame, known_encodings, known_names)
 
-            # Save attendance to file
             if attendance_data:
                 pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-            return render_template('attendance.html', success="Live attendance recorded successfully!")
+                flash("Live attendance recorded successfully!", "success")
+            else:
+                flash("No face detected in the captured image.", "danger")
+
+            return redirect(url_for('view_attendance'))
 
     return render_template('attendance.html')
+
+# Process a single frame for attendance
+def process_frame(frame, known_encodings, known_names):
+    attendance_data = []
+    face_locations = face_recognition.face_locations(frame)
+    face_encodings = face_recognition.face_encodings(frame, face_locations)
+
+    for face_encoding in face_encodings:
+        distances = face_recognition.face_distance(known_encodings, face_encoding)
+        matches = distances <= 0.6  # Threshold for recognizing faces
+        if any(matches):
+            best_match_index = np.argmin(distances)
+            name = known_names[best_match_index]
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            attendance_data.append({'Timestamp': current_time, 'Name': name})
+    return attendance_data
 
 # Route: View Attendance
 @app.route('/view-attendance')
@@ -164,12 +188,10 @@ target_width, target_height = 960, 540  # Desired window size
 def process_video_or_camera_feed(cap, known_encodings, known_names):
     """
     Process the given video capture (live camera or uploaded video) for attendance.
-    Saves attendance only when match percentage is above 55%.
+    Records attendance immediately when a face is detected.
     """
     attendance_data = []
-    last_attendance_time = {}
-    start_time = time.time()  # Record the start time
-    save_interval = 300  # 5 minutes in seconds
+    recorded_names = set()  # To avoid duplicate records for the same person
 
     def scale_and_pad(frame, target_width, target_height):
         """Resize and pad the frame while maintaining aspect ratio."""
@@ -192,7 +214,7 @@ def process_video_or_camera_feed(cap, known_encodings, known_names):
             print("Failed to read frame. Exiting loop.")
             break
 
-        padded_frame, resized_frame, scale, x_offset, y_offset = scale_and_pad(frame, target_width, target_height)
+        # Detect faces and encode them
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         face_locations = face_recognition.face_locations(rgb_frame)
         face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
@@ -207,66 +229,63 @@ def process_video_or_camera_feed(cap, known_encodings, known_names):
                 # Get the best match index
                 best_match_index = np.argmin(distances)
                 match_percentage = (1 - distances[best_match_index]) * 100  # Convert distance to percentage
-                if match_percentage > 55:  # Only consider matches above 55%
-                    name = known_names[best_match_index]
+                name = known_names[best_match_index]
 
-                    # Handle known face attendance
-                    current_time = datetime.now()
-                    current_hour = current_time.replace(minute=0, second=0, microsecond=0)
-                    if name not in last_attendance_time or last_attendance_time[name] < current_hour:
-                        last_attendance_time[name] = current_hour
-                        attendance_data.append({'Timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'), 'Name': name})
-                        print(f"Attendance recorded for {name} ({match_percentage:.2f}%) at {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                if name not in recorded_names:  # Check if the name is already recorded
+                    recorded_names.add(name)
+                    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    attendance_data.append({'Timestamp': current_time, 'Name': name})
+                    print(f"Attendance recorded for {name} ({match_percentage:.2f}%) at {current_time}")
 
-            # Draw bounding box and name with match percentage on the resized frame
+                    # Save attendance data immediately to avoid data loss
+                    pd.DataFrame(attendance_data).to_csv(
+                        ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE)
+                    )
+                    attendance_data.clear()  # Clear the list after saving
+
+            # Draw bounding box and name with match percentage on the face
             (top, right, bottom, left) = face_location
-            top = int(top * scale) + y_offset
-            right = int(right * scale) + x_offset
-            bottom = int(bottom * scale) + y_offset
-            left = int(left * scale) + x_offset
-            color = (0, 255, 0) if match_percentage > 55 else (0, 0, 255)  # Green for valid, Red otherwise
-            cv2.rectangle(padded_frame, (left, top), (right, bottom), color, 2)
+            color = (0, 255, 0)  # Green for valid
+            cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
             cv2.putText(
-                padded_frame,
+                frame,
                 f"{name} ({match_percentage:.2f}%)",
-                (left, bottom + 20),
+                (left, top - 10),  # Place text slightly above the bounding box
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
                 color,
                 2,
             )
 
-        # Save attendance every 5 minutes
-        if time.time() - start_time >= save_interval:
-            print("Saving attendance data...")
-            pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-            attendance_data.clear()  # Clear data after saving
-            start_time = time.time()  # Reset the timer
+        # Display the frame
+        cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Video", 800, 600)
+        cv2.imshow("Video", frame)
 
-        # Display the padded frame
-        # cv2.namedWindow('Attendance', cv2.WINDOW_NORMAL)  # Make the window resizable
-        # cv2.resizeWindow('Attendance', target_width, target_height)
-        # cv2.imshow('Attendance', padded_frame)
-        # if cv2.waitKey(1) & 0xFF == 27:  # ESC key to stop
+        # Exit on ESC key
+        if cv2.waitKey(1) & 0xFF == 27:
             break
 
+    cap.release()
     cv2.destroyAllWindows()
     print("Processing complete. Closing video feed.")
     return attendance_data
 
 
 
-# def restart_flask_server():
-#     time.sleep(1)  # Allow the current request to finish
-#     print("Restarting Flask server...")
-#     os.execv(sys.executable, ['python'] + sys.argv)
 
-# @app.after_request
-# def reload_app(response):
-#     if request.method == 'POST' and request.endpoint in ['attendance', 'register']:
-#         print("Scheduling Flask server restart...")
-#         threading.Thread(target=restart_flask_server).start()
-#     return response
+
+def restart_flask_server():
+    time.sleep(1)  # Allow the current request to finish
+    print("Restarting Flask server...")
+    os.execv(sys.executable, ['python'] + sys.argv)
+
+@app.after_request
+def reload_app(response):
+    if request.method == 'POST' and request.endpoint in ['attendance', 'register']:
+        print("Scheduling Flask server restart...")
+        threading.Thread(target=restart_flask_server).start()
+    return response
 
 
 
