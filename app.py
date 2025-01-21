@@ -308,9 +308,9 @@ def process_video_or_camera_feed(cap, known_encodings, known_names):
             )
 
         # Display the frame
-        cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Video", 800, 600)
-        cv2.imshow("Video", frame)
+        # cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow("Video", 800, 600)
+        # cv2.imshow("Video", frame)
 
         # Exit on ESC key
         if cv2.waitKey(1) & 0xFF == 27:
