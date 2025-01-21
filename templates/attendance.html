@@ -3,50 +3,36 @@
 <div class="container mt-5">
     <div class="card shadow p-4">
         <h2 class="text-center text-primary">Record Attendance</h2>
-        <p class="text-center text-secondary">Capture live attendance using the camera:</p>
-        <form method="POST" class="mt-4" id="attendanceForm">
-            <div class="d-flex flex-column align-items-center">
-                <h5 class="text-muted mb-4">Options:</h5>
-                <!-- Live Camera Feed -->
-                <div id="cameraContainer" class="d-flex flex-column align-items-center">
-                    <video id="camera" autoplay playsinline width="200" height="200" style="border: 1px solid #ccc;"></video>
-                    <canvas id="canvas" style="display: none;"></canvas>
-                    <button type="button" id="captureButton" class="btn btn-lg btn-success mt-3">
-                        <i class="fas fa-camera"></i> Capture Live Attendance
-                    </button>
-                </div>
-                <!-- Commented upload video option -->
-                
-                <!-- <h6 class="text-muted mt-3">OR</h6>
-                <input type="file" name="uploaded_video" accept="video/*" class="form-control mt-3">
-                <button type="submit" class="btn btn-lg btn-primary mt-3">
-                    <i class="fas fa-upload"></i> Upload Video
-                </button>  -->
-            
+        <p class="text-center text-secondary">Real-time face detection and recognition:</p>
+        <div class="d-flex flex-column align-items-center">
+            <!-- Processed Frame -->
+            <div class="mb-4">
+                <h5 class="text-center">Processed Frame</h5>
+                <canvas id="processedCanvas" width="400" height="400" style="border: 1px solid #ccc;"></canvas>
             </div>
-            <input type="hidden" name="captured_image" id="capturedImage">
-        </form>
-        <!-- Display success message -->
-        {% if success %}
-            <div class="alert alert-success mt-4" role="alert">
-                {{ success }}
+            <!-- Live Camera Feed -->
+            <div>
+                <h5 class="text-center">Live Camera</h5>
+                <video id="camera" autoplay playsinline width="400" height="400" style="border: 1px solid #ccc;"></video>
             </div>
-        {% endif %}
-        <!-- Display error message -->
-        {% if error %}
-            <div class="alert alert-danger mt-4" role="alert">
-                {{ error }}
-            </div>
-        {% endif %}
+        </div>
+        <!-- Capture Attendance Button -->
+        <div id="captureAttendanceContainer" class="text-center mt-4">
+            <button id="captureAttendanceButton" class="btn btn-lg btn-success" disabled>
+                <i class="fas fa-check-circle"></i> Capture Attendance
+            </button>
+        </div>
     </div>
 </div>
 
+<script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
 <script>
+    const socket = io();
     const camera = document.getElementById('camera');
-    const canvas = document.getElementById('canvas');
-    const captureButton = document.getElementById('captureButton');
-    const capturedImageInput = document.getElementById('capturedImage');
-    const attendanceForm = document.getElementById('attendanceForm');
+    const processedCanvas = document.getElementById('processedCanvas');
+    const processedContext = processedCanvas.getContext('2d');
+    const captureAttendanceButton = document.getElementById('captureAttendanceButton');
+    let recognizedName = null;
 
     // Initialize camera
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -62,25 +48,86 @@
         alert('Camera not supported on this browser.');
     }
 
-    // Capture image from the camera
-    captureButton.addEventListener('click', function (event) {
-        event.preventDefault(); // Prevent form submission
+    // Send frames to the server
+    camera.addEventListener('play', function () {
+        const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
-        canvas.width = 200; // Set the width to 150px
-        canvas.height = 200; // Set the height to 150px
-        context.drawImage(camera, 0, 0, canvas.width, canvas.height);
-        const imageData = canvas.toDataURL('image/jpeg'); // Convert canvas to base64
-        capturedImageInput.value = imageData; // Set hidden input value
-        alert('Image captured. Submitting the form...');
-        attendanceForm.submit(); // Automatically submit the form after capturing
+
+        function sendFrame() {
+            canvas.width = camera.videoWidth;
+            canvas.height = camera.videoHeight;
+            context.drawImage(camera, 0, 0, canvas.width, canvas.height);
+
+            // Convert frame to base64
+            const frameData = canvas.toDataURL('image/jpeg');
+            socket.emit('video_frame', frameData);
+
+            // Repeat at a regular interval
+            setTimeout(sendFrame, 100); // 100ms interval for ~10fps
+        }
+        sendFrame();
     });
 
-    // Prevent form submission without a captured image
-    attendanceForm.addEventListener('submit', function (event) {
-        if (!capturedImageInput.value) {
-            event.preventDefault();
-            alert('Please capture an image before submitting.');
+    // Receive processed frames from the server
+    socket.on('response_frame', function (data) {
+        console.log("Server Response:", data);
+
+        if (data.error) {
+            console.error("Error from server:", data.error);
+        } else {
+            const img = new Image();
+            img.src = data.frame;
+            img.onload = function () {
+                processedCanvas.width = 400; // Ensure canvas size is 400x400
+                processedCanvas.height = 400;
+                processedContext.clearRect(0, 0, processedCanvas.width, processedCanvas.height); // Clear canvas
+                processedContext.drawImage(img, 0, 0, 400, 400); // Draw resized image
+            };
+
+            // Check for face recognition
+            if (data.faceRecognized && data.name) {
+                recognizedName = data.name;
+                captureAttendanceButton.disabled = false; // Enable the button
+            } else {
+                recognizedName = null;
+                captureAttendanceButton.disabled = true; // Keep the button disabled
+            }
         }
     });
+
+    // Handle "Capture Attendance" button click
+    captureAttendanceButton.addEventListener('click', function () {
+    if (recognizedName) {
+        // Create a custom alert container
+        const alertContainer = document.createElement('div');
+        alertContainer.innerText = `Attendance Captured for ${recognizedName}!`;
+        alertContainer.style.position = 'fixed';
+        alertContainer.style.top = '20px';
+        alertContainer.style.left = '50%';
+        alertContainer.style.transform = 'translateX(-50%)';
+        alertContainer.style.backgroundColor = '#28a745';
+        alertContainer.style.color = 'white';
+        alertContainer.style.padding = '15px 20px';
+        alertContainer.style.borderRadius = '5px';
+        alertContainer.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
+        alertContainer.style.zIndex = '9999';
+        alertContainer.style.fontSize = '16px';
+        alertContainer.style.fontWeight = 'bold';
+        alertContainer.style.textAlign = 'center';
+
+        // Append the alert to the body
+        document.body.appendChild(alertContainer);
+
+        // Remove the alert after 2 seconds
+        setTimeout(() => {
+            alertContainer.remove();
+        }, 2000);
+
+        // Emit attendance event to the server
+        socket.emit('capture_attendance', { name: recognizedName });
+    }
+});
+
 </script>
+
 {% endblock %}
