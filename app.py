@@ -11,10 +11,13 @@ import threading
 import time
 import base64
 from flask_socketio import SocketIO, emit
+from collections import defaultdict
+
+
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=1e8, ping_timeout=120, ping_interval=25)
 
 
 
@@ -37,10 +40,13 @@ def load_encodings(encodings_path):
 # Global variables for known encodings and names
 known_encodings, known_names = load_encodings(FACES_DIR)
 
+# Track the last recorded time for each person
+last_recorded_time = defaultdict(lambda: datetime.min)
+
 @socketio.on('video_frame')
 def handle_video_frame(data):
     """
-    Process incoming video frames from the client.
+    Process incoming video frames from the client and automatically handle attendance recording.
     """
     try:
         # Decode the base64 image
@@ -52,13 +58,16 @@ def handle_video_frame(data):
             emit('response_frame', {'error': 'Invalid frame received'})
             return
 
-        # Process the frame for face recognition
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Downscale the frame to reduce processing load but maintain aspect ratio
+        original_height, original_width = frame.shape[:2]
+        resized_frame = cv2.resize(frame, (320, int(320 * original_height / original_width)))
+
+        # Process the resized frame for face recognition
+        rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
         face_locations = face_recognition.face_locations(rgb_frame)
         face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
-        face_recognized = False
-        recognized_name = None
+        recognized_faces = []  # List of recognized faces
 
         for face_encoding, face_location in zip(face_encodings, face_locations):
             distances = face_recognition.face_distance(known_encodings, face_encoding)
@@ -69,11 +78,39 @@ def handle_video_frame(data):
                 best_match_index = np.argmin(distances)
                 name = known_names[best_match_index]
                 match_percentage = (1 - distances[best_match_index]) * 100
-                face_recognized = True
-                recognized_name = name
+                recognized_faces.append({'name': name, 'match_percentage': match_percentage})
 
-            # Draw bounding box and name
+                # Check if match_percentage is above 50%
+                if match_percentage > 50:
+                    now = datetime.now()
+                    if name not in last_recorded_time or (now - last_recorded_time[name]).total_seconds() > 30:
+                        # Update the last recorded time
+                        last_recorded_time[name] = now
+
+                        # Write to CSV
+                        attendance_data = {
+                            "Timestamp": now.strftime('%Y-%m-%d %H:%M:%S'),
+                            "Name": name,
+                            "Method": "Automatic Detection Via System Camera",
+                        }
+                        pd.DataFrame([attendance_data]).to_csv(
+                            ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE)
+                        )
+
+                        # Send alert to the client
+                        emit('attendance_captured', {
+                            'name': name,
+                            'timestamp': attendance_data["Timestamp"]
+                        })
+
+            # Draw bounding box and name (convert back to the original frame's scale)
             top, right, bottom, left = face_location
+            scale_x = original_width / 320
+            scale_y = original_height / int(320 * original_height / original_width)
+            top, right, bottom, left = [
+                int(coord * scale_y if i % 2 == 0 else coord * scale_x)
+                for i, coord in enumerate([top, right, bottom, left])
+            ]
             cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
             cv2.putText(
                 frame,
@@ -89,14 +126,32 @@ def handle_video_frame(data):
         _, buffer = cv2.imencode('.jpg', frame)
         processed_frame = base64.b64encode(buffer).decode('utf-8')
 
-        # Send the processed frame and recognition status back to the client
+        # Send the processed frame and recognition data back to the client
         emit('response_frame', {
             'frame': f"data:image/jpeg;base64,{processed_frame}",
-            'faceRecognized': face_recognized,
-            'name': recognized_name
+            'recognized_faces': recognized_faces
         })
+
     except Exception as e:
         emit('response_frame', {'error': str(e)})
+
+
+
+@socketio.on('capture_attendance')
+def capture_attendance(data):
+    names = data.get('names', [])
+    if names:
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        attendance_data = []
+        for name in names:
+            attendance_data.append({"Timestamp": current_time, "Name": name, "Method": "Manual Trigger"})
+
+        # Append to CSV
+        pd.DataFrame(attendance_data).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE))
+        print(f"Attendance captured manually for: {', '.join(names)}")
+
+        # Optionally, emit a confirmation back to the client
+        emit('attendance_captured', {'names': names, 'timestamp': current_time}, broadcast=True)
 
 
 # Route: Home
@@ -291,15 +346,8 @@ import time  # For the timer functionality
 def attendance():
     return render_template('attendance.html')
 
-@socketio.on('capture_attendance')
-def capture_attendance(data):
-    name = data.get('name')
-    if name:
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        new_entry = {"Timestamp": current_time, "Name": name, "Method": "Attendance via System Camera"}
-        # Append to CSV
-        pd.DataFrame([new_entry]).to_csv(ATTENDANCE_FILE, mode='a', index=False, header=False)
-        print(f"Attendance captured for {name} at {current_time}")
+
+
 
 
 # Process a single frame for attendance

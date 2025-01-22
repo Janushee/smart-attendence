@@ -62,25 +62,93 @@
     }
 
     // Capture image from the camera
-    captureButton.addEventListener('click', function (event) {
-        event.preventDefault(); // Prevent form submission
-        const context = canvas.getContext('2d');
-        canvas.width = 200; // Set the width to 200px
-        canvas.height = 200; // Set the height to 200px
-        context.drawImage(camera, 0, 0, canvas.width, canvas.height);
-        const imageData = canvas.toDataURL('image/jpeg'); // Convert canvas to Base64
-        capturedImageInput.value = imageData; // Set hidden input value
-        alert('Image captured. The form will now be submitted.');
-        registerForm.submit(); // Automatically submit the form after capturing
-    });
+captureButton.addEventListener('click', function (event) {
+    event.preventDefault(); // Prevent form submission
+    const context = canvas.getContext('2d');
+    canvas.width = 200; // Set the width to 200px
+    canvas.height = 200; // Set the height to 200px
+    context.drawImage(camera, 0, 0, canvas.width, canvas.height);
+    const imageData = canvas.toDataURL('image/jpeg'); // Convert canvas to Base64
+    capturedImageInput.value = imageData; // Set hidden input value
 
-    // Prevent form submission without a captured or uploaded image
-    registerForm.addEventListener('submit', function (event) {
-        const uploadedImage = registerForm.querySelector('input[name="uploaded_image"]').files.length;
-        if (!capturedImageInput.value && !uploadedImage) {
-            event.preventDefault();
-            alert('Please capture an image or upload one before submitting.');
-        }
-    });
+    // Custom alert for successful image capture
+    const alertContainer = document.createElement('div');
+    alertContainer.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #007bff;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 5px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 9999;
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            opacity: 1;
+            transition: opacity 1s ease-out;
+        ">
+            <i class="fas fa-camera" style="margin-right: 10px;"></i>
+            Image captured successfully! Submitting the form now...
+        </div>
+    `;
+
+    // Append the alert to the body
+    document.body.appendChild(alertContainer);
+
+    // Remove the alert after 2 seconds with a fade-out effect
+    setTimeout(() => {
+        alertContainer.style.opacity = 0;
+        setTimeout(() => alertContainer.remove(), 1000); // Ensure it's removed after the fade-out
+    }, 2000);
+
+    registerForm.submit(); // Automatically submit the form after capturing
+});
+
+// Prevent form submission without a captured or uploaded image
+registerForm.addEventListener('submit', function (event) {
+    const uploadedImage = registerForm.querySelector('input[name="uploaded_image"]').files.length;
+    if (!capturedImageInput.value && !uploadedImage) {
+        event.preventDefault();
+
+        // Custom alert for missing image
+        const alertContainer = document.createElement('div');
+        alertContainer.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #dc3545;
+                color: white;
+                padding: 15px 20px;
+                border-radius: 5px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                z-index: 9999;
+                font-size: 16px;
+                font-weight: bold;
+                text-align: center;
+                opacity: 1;
+                transition: opacity 1s ease-out;
+            ">
+                <i class="fas fa-exclamation-circle" style="margin-right: 10px;"></i>
+                Please capture an image or upload one before submitting.
+            </div>
+        `;
+
+        // Append the alert to the body
+        document.body.appendChild(alertContainer);
+
+        // Remove the alert after 2 seconds with a fade-out effect
+        setTimeout(() => {
+            alertContainer.style.opacity = 0;
+            setTimeout(() => alertContainer.remove(), 1000); // Ensure it's removed after the fade-out
+        }, 2000);
+    }
+});
+
 </script>
 {% endblock %}
