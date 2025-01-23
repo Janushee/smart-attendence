@@ -45,7 +45,7 @@ def handle_video_frame(data):
 
         frame_data = data['frame']
         camera_name = data['camera_name']
-        
+
         try:
             image_data = base64.b64decode(frame_data.split(',')[1])
         except Exception as e:
@@ -168,4 +168,4 @@ def view_attendance():
     return render_template('view_attendance.html', records=records)
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, debug=True,allow_unsafe_werkzeug=True)
