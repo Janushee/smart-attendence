@@ -5,18 +5,11 @@
         <h2 class="text-center text-primary">Record Attendance</h2>
         <p class="text-center text-secondary">Real-time face detection and recognition:</p>
         <div class="d-flex flex-column align-items-center">
-            <!-- Processed Frame -->
             <div class="mb-4">
                 <h5 class="text-center">Frame</h5>
                 <canvas id="processedCanvas" width="400" height="400" style="border: 1px solid #ccc;"></canvas>
             </div>
         </div>
-        <!-- Capture Attendance Button -->
-        <!-- <div id="captureAttendanceContainer" class="text-center mt-4">
-            <button id="captureAttendanceButton" class="btn btn-lg btn-success" disabled>
-                <i class="fas fa-check-circle"></i> Capture Attendance
-            </button>
-        </div> -->
     </div>
 </div>
 
@@ -25,16 +18,25 @@
     const socket = io();
     const processedCanvas = document.getElementById('processedCanvas');
     const processedContext = processedCanvas.getContext('2d');
+    let currentStream = null;
 
-    // Initialize camera feed and process frames
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: true })
+    const params = new URLSearchParams(window.location.search);
+    const cameraId = params.get('cameraId');
+    const cameraName = params.get('cameraName') || "Unknown Camera";
+
+    if (!cameraId) {
+        alert('No camera selected. Redirecting to the home page.');
+        window.location.href = '/';
+    }
+
+    function startCamera(deviceId) {
+        navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } })
             .then(function (stream) {
-                const video = document.createElement('video'); // Create a hidden video element
+                currentStream = stream;
+                const video = document.createElement('video');
                 video.srcObject = stream;
                 video.play();
 
-                // Send frames to the server at a lower frequency
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
 
@@ -43,27 +45,25 @@
                     canvas.height = video.videoHeight;
                     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                    // Convert frame to base64 and emit to the server
                     const frameData = canvas.toDataURL('image/jpeg');
-                    socket.emit('video_frame', frameData);
-
-                    setTimeout(sendFrame, 200); // 200ms interval
+                    socket.emit('video_frame', { frame: frameData, camera_name: cameraName });
+                    setTimeout(sendFrame, 200);
                 }
+
                 sendFrame();
             })
             .catch(function (err) {
                 alert('Error accessing the camera: ' + err.message);
+                window.location.href = '/';
             });
-    } else {
-        alert('Camera not supported on this browser.');
     }
 
-    // Receive processed frames from the server
+    startCamera(cameraId);
+
     socket.on('response_frame', function (data) {
         if (data.error) {
             console.error("Error from server:", data.error);
         } else {
-            // Display the processed frame
             const img = new Image();
             img.src = data.frame;
             img.onload = function () {
@@ -74,42 +74,5 @@
             };
         }
     });
-
-    // Show alert when attendance is automatically recorded
-    socket.on('attendance_captured', function (data) {
-        const alertContainer = document.createElement('div');
-        alertContainer.innerHTML = `
-            <div style="
-                position: fixed;
-                top: 20px;
-                left: 50%;
-                transform: translateX(-50%);
-                background-color: #28a745;
-                color: white;
-                padding: 15px 20px;
-                border-radius: 5px;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                z-index: 9999;
-                font-size: 16px;
-                font-weight: bold;
-                text-align: center;
-                opacity: 1;
-                transition: opacity 1s ease-out;
-            ">
-                <i class="fas fa-check-circle" style="margin-right: 10px;"></i>
-                Attendance Captured for: <span style="font-weight: bold;">${data.name}</span> at ${data.timestamp}
-            </div>
-        `;
-
-        document.body.appendChild(alertContainer);
-
-        // Remove the alert after 2 seconds with a fade-out effect
-        setTimeout(() => {
-            alertContainer.style.opacity = 0;
-            setTimeout(() => alertContainer.remove(), 1000);
-        }, 2000);
-    });
 </script>
-
-
 {% endblock %}

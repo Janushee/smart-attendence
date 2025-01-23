@@ -29,9 +29,10 @@
                         <i class="fas fa-user-check fa-3x text-primary mb-3"></i>
                         <h5 class="card-title">Take Attendance</h5>
                         <p class="card-text text-secondary">Mark attendance for students quickly and accurately.</p>
-                        <a href="{{ url_for('attendance') }}" class="btn btn-primary btn-lg">
+                        <select id="cameraSelect" class="form-control mb-3"></select>
+                        <button id="startAttendance" class="btn btn-primary btn-lg">
                             Start Now
-                        </a>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -45,4 +46,51 @@
         </div>
     </div>
 </div>
+
+<script>
+    const cameraSelect = document.getElementById('cameraSelect');
+    const startAttendanceButton = document.getElementById('startAttendance');
+
+    // List all video devices and set the system camera as default
+    navigator.mediaDevices.enumerateDevices()
+        .then(function (devices) {
+            let defaultCameraId = null;
+
+            devices.forEach(function (device) {
+                if (device.kind === 'videoinput') {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${cameraSelect.length + 1}`;
+                    cameraSelect.appendChild(option);
+
+                    // Assume the first listed camera is the default system camera
+                    if (!defaultCameraId) {
+                        defaultCameraId = device.deviceId;
+                    }
+                }
+            });
+
+            // Automatically select the default camera
+            if (defaultCameraId) {
+                cameraSelect.value = defaultCameraId;
+            }
+        })
+        .catch(function (err) {
+            console.error('Error accessing media devices:', err);
+        });
+
+    // Handle attendance redirection with selected camera
+    startAttendanceButton.addEventListener('click', function () {
+        const selectedCamera = cameraSelect.value;
+        const cameraName = cameraSelect.options[cameraSelect.selectedIndex].text;
+
+        if (selectedCamera) {
+            const url = `/attendance?cameraId=${encodeURIComponent(selectedCamera)}&cameraName=${encodeURIComponent(cameraName)}`;
+            window.location.href = url;
+        } else {
+            alert('Please select a camera to proceed.');
+        }
+    });
+</script>
+
 {% endblock %}
