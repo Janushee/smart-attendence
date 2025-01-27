@@ -144,6 +144,33 @@ def index():
 # Route: Register
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    if request.method == 'POST':
+        name = request.form['name']
+        captured_image = request.form['captured_image']
+
+        # Decode the base64 image data
+        img_data = captured_image.split(",")[1]
+        img_binary = base64.b64decode(img_data)
+
+        # Save the image to the 'faces' directory
+        image_path = os.path.join(FACES_DIR, f"{name}.jpg")
+        with open(image_path, "wb") as f:
+            f.write(img_binary)
+
+        # Load the image to get the face encoding
+        image = cv2.imread(image_path)
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # Get the face encodings for the image
+        face_encodings = face_recognition.face_encodings(rgb_image)
+
+        if face_encodings:
+            encoding_path = os.path.join(FACES_DIR, f"{name}_encoding.npy")
+            np.save(encoding_path, face_encodings[0])  # Save the first face encoding
+            return render_template('register.html', success=f"Face for {name} registered successfully!")
+        else:
+            return render_template('register.html', error="No face detected. Please try again.")
+    
     return render_template('register.html')
 
 # Route: Attendance
