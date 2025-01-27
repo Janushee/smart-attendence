@@ -10,6 +10,7 @@
             <hr class="my-4">
             <p class="text-muted">Get started by selecting one of the options below:</p>
         </div>
+
         <div class="row mt-5">
             <div class="col-md-6 mb-3">
                 <div class="card text-center border-0">
@@ -23,6 +24,7 @@
                     </div>
                 </div>
             </div>
+
             <div class="col-md-6 mb-3">
                 <div class="card text-center border-0">
                     <div class="card-body">
@@ -37,6 +39,15 @@
                 </div>
             </div>
         </div>
+
+        <!-- New Section for Live Feed -->
+        <div class="row mt-5">
+            <div class="col-md-12 text-center">
+                <h4>View Live Feed</h4>
+                <a href="{{ url_for('video_feed') }}" class="btn btn-info btn-lg">View Video Feed</a>
+            </div>
+        </div>
+
         <div class="row mt-5">
             <div class="col-md-12 text-center">
                 <a href="{{ url_for('view_attendance') }}" class="btn btn-outline-info btn-lg">
@@ -92,5 +103,4 @@
         }
     });
 </script>
-
 {% endblock %}
