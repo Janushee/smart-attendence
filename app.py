@@ -134,7 +134,10 @@ def handle_video_frame(data):
     except Exception as e:
         emit('response_frame', {'error': str(e)})
 
-
+# Route: Attendance
+@app.route('/attendance')
+def attendance():
+    return render_template('attendance.html')
 
 # Route: Home
 @app.route('/')
@@ -173,10 +176,7 @@ def register():
     
     return render_template('register.html')
 
-# Route: Attendance
-@app.route('/attendance')
-def attendance():
-    return render_template('attendance.html')
+
 
 # Route: View Attendance
 @app.route('/view-attendance')

@@ -10,69 +10,101 @@
                 <canvas id="processedCanvas" width="400" height="400" style="border: 1px solid #ccc;"></canvas>
             </div>
         </div>
+
+        <!-- Attendance Alert -->
+        <div id="attendanceAlert" class="alert alert-success mt-3" style="display:none;">
+            <strong>Attendance Marked!</strong> The attendance for <span id="attendeeName"></span> was recorded at <span id="attendeeTime"></span>.
+        </div>
     </div>
 </div>
 
 <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
 <script>
-    const socket = io();
-    const processedCanvas = document.getElementById('processedCanvas');
-    const processedContext = processedCanvas.getContext('2d');
-    let currentStream = null;
+    document.addEventListener("DOMContentLoaded", function() {
+        const socket = io();
+        const processedCanvas = document.getElementById('processedCanvas');
+        const processedContext = processedCanvas.getContext('2d');
+        let currentStream = null;
 
-    const params = new URLSearchParams(window.location.search);
-    const cameraId = params.get('cameraId');
-    const cameraName = params.get('cameraName') || "Unknown Camera";
+        const params = new URLSearchParams(window.location.search);
+        const cameraId = params.get('cameraId');
+        const cameraName = params.get('cameraName') || "Unknown Camera";
 
-    if (!cameraId) {
-        alert('No camera selected. Redirecting to the home page.');
-        window.location.href = '/';
-    }
-
-    function startCamera(deviceId) {
-        navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } })
-            .then(function (stream) {
-                currentStream = stream;
-                const video = document.createElement('video');
-                video.srcObject = stream;
-                video.play();
-
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-
-                function sendFrame() {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                    const frameData = canvas.toDataURL('image/jpeg');
-                    socket.emit('video_frame', { frame: frameData, camera_name: cameraName });
-                    setTimeout(sendFrame, 200);
-                }
-
-                sendFrame();
-            })
-            .catch(function (err) {
-                alert('Error accessing the camera: ' + err.message);
-                window.location.href = '/';
-            });
-    }
-
-    startCamera(cameraId);
-
-    socket.on('response_frame', function (data) {
-        if (data.error) {
-            console.error("Error from server:", data.error);
-        } else {
-            const img = new Image();
-            img.src = data.frame;
-            img.onload = function () {
-                processedCanvas.width = 400;
-                processedCanvas.height = 400;
-                processedContext.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
-                processedContext.drawImage(img, 0, 0, 400, 400);
-            };
+        if (!cameraId) {
+            alert('No camera selected. Redirecting to the home page.');
+            window.location.href = '/';
         }
-    });
+
+        function startCamera(deviceId) {
+            navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } })
+                .then(function (stream) {
+                    currentStream = stream;
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.play();
+
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+
+                    function sendFrame() {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                        const frameData = canvas.toDataURL('image/jpeg');
+                        socket.emit('video_frame', { frame: frameData, camera_name: cameraName });
+                        setTimeout(sendFrame, 200);
+                    }
+
+                    sendFrame();
+                })
+                .catch(function (err) {
+                    alert('Error accessing the camera: ' + err.message);
+                    window.location.href = '/';
+                });
+        }
+
+        startCamera(cameraId);
+
+        socket.on('response_frame', function (data) {
+            if (data.error) {
+                console.error("Error from server:", data.error);
+            } else {
+                const img = new Image();
+                img.src = data.frame;
+                img.onload = function () {
+                    processedCanvas.width = 400;
+                    processedCanvas.height = 400;
+                    processedContext.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
+                    processedContext.drawImage(img, 0, 0, 400, 400);
+                };
+            }
+        });
+
+        socket.on('attendance_captured', function(data) {
+            console.log("Attendance captured:", data);  // Log event data to the console
+
+            const attendanceAlert = document.getElementById('attendanceAlert');
+            const attendeeName = document.getElementById('attendeeName');
+            const attendeeTime = document.getElementById('attendeeTime');
+
+            // Make sure the elements exist before updating
+            if (attendanceAlert && attendeeName && attendeeTime) {
+                // Update the alert with the captured person's name and timestamp
+                attendeeName.innerText = data.name;
+                attendeeTime.innerText = data.timestamp;
+
+                // Show the attendance alert
+                attendanceAlert.style.display = 'block';
+
+                // Hide the alert after 5 seconds
+                setTimeout(() => {
+                    attendanceAlert.style.display = 'none';
+                }, 5000);
+            } else {
+                console.error("Alert elements not found!");
+            }
+                });
+            });
 </script>
 {% endblock %}
