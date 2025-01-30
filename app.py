@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash,Response
 import cv2
 import face_recognition
 import numpy as np
@@ -17,7 +17,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=1e8, pin
 FACES_DIR = 'faces'
 ATTENDANCE_FILE = 'attendance.csv'
 os.makedirs(FACES_DIR, exist_ok=True)
-
+# MJPEG URL (for camera feed)
+MJPEG_URL = 'http://192.168.11.130:8080/video'
 # Load existing encodings
 def load_encodings(encodings_path):
     encodings, names = [], []
@@ -34,6 +35,79 @@ known_encodings, known_names = load_encodings(FACES_DIR)
 
 # Track the last recorded time for each person
 last_recorded_time = defaultdict(lambda: datetime.min)
+
+# Stores recognized faces and their locations for continuity
+recognized_faces_data = {}
+
+
+# Generate video frames with face recognition
+def generate_frames():
+    capture = cv2.VideoCapture(MJPEG_URL)
+
+    while True:
+        ret, frame = capture.read()
+
+        if not ret:
+            print("Failed to grab frame")
+            break
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_locations = face_recognition.face_locations(rgb_frame)
+        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+        recognized_faces = []
+
+        for face_encoding, face_location in zip(face_encodings, face_locations):
+            distances = face_recognition.face_distance(known_encodings, face_encoding)
+            name = "Unknown"
+            match_percentage = 0
+
+            if any(distances <= 0.5):  # Recognition threshold
+                best_match_index = np.argmin(distances)
+                name = known_names[best_match_index]
+                match_percentage = (1 - distances[best_match_index]) * 100
+                recognized_faces.append({'name': name, 'match_percentage': match_percentage})
+
+                # Log attendance if new person or the same person appeared after 30 seconds
+                now = datetime.now()
+                if name not in last_recorded_time or (now - last_recorded_time[name]).total_seconds() > 30:
+                    last_recorded_time[name] = now
+                    attendance_data = {
+                        "Timestamp": now.strftime('%Y-%m-%d %H:%M:%S'),
+                        "Name": name,
+                        "Method": "Live-stream",  # Customize to the camera name
+                    }
+
+                    # Append to CSV
+                    df = pd.DataFrame([attendance_data])
+                    df.to_csv(ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE))
+
+                    # Log to terminal
+                    print(f"Recorded Attendance for {name} at {attendance_data['Timestamp']}")
+
+                    # Emit alert to frontend
+                    socketio.emit('attendance_captured_live', {
+                        'name': name,
+                        'timestamp': attendance_data["Timestamp"]
+                    })
+
+            # Draw the bounding box and name with match percentage
+            top, right, bottom, left = face_location
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+            cv2.putText(frame, f"{name} ({match_percentage:.2f}%)", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+        # Encode the frame and send to client
+        _, buffer = cv2.imencode('.jpg', frame)
+        frame_data = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n\r\n')
+
+    capture.release()
+
+@app.route('/video-feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 
 @socketio.on('video_frame')
 def handle_video_frame(data):
