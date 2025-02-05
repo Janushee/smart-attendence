@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, flash,Response
+import threading
+from flask import Flask, jsonify, render_template, request, redirect, url_for, flash,Response
 import cv2
 import face_recognition
 import numpy as np
@@ -8,24 +9,48 @@ from datetime import datetime
 from flask_socketio import SocketIO, emit
 from collections import defaultdict
 import base64
+import logging
+import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
-socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=1e8, ping_timeout=120, ping_interval=25)
+MJPEG_URL = os.getenv("MJPEG_URL")
+URL_PANTRY = os.getenv("URL_PANTRY")
+URL_SALES =os.getenv("URL_SALES")
+URL_HR = os.getenv("URL_HR")
+
+
+socketio = SocketIO(app,cors_allowed_origins="*", max_http_buffer_size=1e8, ping_timeout=120, ping_interval=25)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', handlers=[logging.StreamHandler()])
+
 
 # Directories for storing data
 FACES_DIR = 'faces'
 ATTENDANCE_FILE = 'attendance.csv'
 os.makedirs(FACES_DIR, exist_ok=True)
 # MJPEG URL (for camera feed)
-MJPEG_URL = 'http://192.168.11.130:8080/video'
+# MJPEG_URL = 'http://192.168.11.130:8080/video'
+
+
+
+frame_interval = 1 / 10  # 10 FPS
+frame_buffer = []
+
+# Track last recorded time
+last_recorded_time = {}
+process_frame_interval = 3
+
 # Load existing encodings
 def load_encodings(encodings_path):
     encodings, names = [], []
     for file in os.listdir(encodings_path):
         if file.endswith("_encoding.npy"):
             name = file.split('_')[0]
-            encoding = np.load(os.path.join(encodings_path, file))
+            encoding = np.load(os.path.join(encodings_path, file),allow_pickle=True)
             encodings.append(encoding)
             names.append(name)
     return encodings, names
@@ -39,75 +64,382 @@ last_recorded_time = defaultdict(lambda: datetime.min)
 # Stores recognized faces and their locations for continuity
 recognized_faces_data = {}
 
+# Global variables for each camera's frames and flags
+current_frame_pantry = None
+current_frame_sales = None
+current_frame_hr = None
+current_frame = None
 
-# Generate video frames with face recognition
-def generate_frames():
+frame_available_pantry = False
+frame_available_sales = False
+frame_available_hr = False
+frame_available = False
+frame_lock = threading.Lock()
+
+
+# Example: Using a dictionary to hold the frame and availability flag for each camera
+frame_data = {
+    "pantry": {"frame": None, "available": False},
+    "sales": {"frame": None, "available": False},
+    "hr": {"frame": None, "available": False}
+}
+
+
+def process_faces(frame, known_encodings, known_names,method):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    face_locations = face_recognition.face_locations(rgb_frame)
+    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+    recognized_faces = []
+    now = datetime.now()
+
+    for face_encoding, face_location in zip(face_encodings, face_locations):
+        distances = face_recognition.face_distance(known_encodings, face_encoding)
+        name = "Unknown"
+        match_percentage = 0
+
+        if any(distances <= 0.5):  # Reduced threshold to reduce false positives
+            best_match_index = np.argmin(distances)
+            name = known_names[best_match_index]
+            match_percentage = (1 - distances[best_match_index]) * 100
+            recognized_faces.append({'name': name, 'match_percentage': match_percentage})
+
+            if name not in last_recorded_time or (now - last_recorded_time[name]).total_seconds() > 30:
+                last_recorded_time[name] = now
+                attendance_data = {
+                    "Timestamp": now.strftime('%Y-%m-%d %H:%M:%S'),
+                    "Name": name,
+                    "match percentage":f'{match_percentage:.2f}',
+                    "Method": method,
+                }
+
+                # Append to CSV
+                df = pd.DataFrame([attendance_data])
+                df.to_csv(ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE))
+
+                # Log attendance
+                print(f"Recorded Attendance for {name}({match_percentage:.2f}) at {attendance_data['Timestamp']} in {method}")
+
+        # Draw the bounding box and name with match percentage
+        top, right, bottom, left = face_location
+        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(frame, f"{name} ({match_percentage:.2f}%)", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+    return frame, recognized_faces
+
+# Function to capture frames in a separate thread
+def capture_frames():
+    global current_frame, frame_available
     capture = cv2.VideoCapture(MJPEG_URL)
-
+    print('Thread started')
     while True:
         ret, frame = capture.read()
-
         if not ret:
             print("Failed to grab frame")
             break
+        
+        with frame_lock:
+            current_frame = frame
+            frame_available = True
+        # print('captured A frame')
+    capture.release()
+    print('tread stopped')
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations = face_recognition.face_locations(rgb_frame)
-        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
-        recognized_faces = []
 
-        for face_encoding, face_location in zip(face_encodings, face_locations):
-            distances = face_recognition.face_distance(known_encodings, face_encoding)
-            name = "Unknown"
-            match_percentage = 0
+def generate_frames():
+    print('in generate')
+    global current_frame, frame_available
 
-            if any(distances <= 0.5):  # Recognition threshold
-                best_match_index = np.argmin(distances)
-                name = known_names[best_match_index]
-                match_percentage = (1 - distances[best_match_index]) * 100
-                recognized_faces.append({'name': name, 'match_percentage': match_percentage})
+    # Start the frame capture thread
+    capture_thread = threading.Thread(target=capture_frames)
+    capture_thread.daemon = True  # Allow thread to exit when main program exits
+    capture_thread.start()
 
-                # Log attendance if new person or the same person appeared after 30 seconds
-                now = datetime.now()
-                if name not in last_recorded_time or (now - last_recorded_time[name]).total_seconds() > 30:
-                    last_recorded_time[name] = now
-                    attendance_data = {
-                        "Timestamp": now.strftime('%Y-%m-%d %H:%M:%S'),
-                        "Name": name,
-                        "Method": "Live-stream",  # Customize to the camera name
-                    }
+    last_processed_time = time.time()
+    
+    while True:
+        with frame_lock:
+            if not frame_available:
+                continue  # Wait for a new frame to be available
+            
+            # Reset the flag after capturing the current frame
+            frame_available = False
+            
+            # Use the current frame for processing
+            if current_frame is not None:
+                frame_to_process = current_frame.copy()
+            else:
+                continue  # Skip if there is no valid frame
 
-                    # Append to CSV
-                    df = pd.DataFrame([attendance_data])
-                    df.to_csv(ATTENDANCE_FILE, mode='a', index=False, header=not os.path.exists(ATTENDANCE_FILE))
+        current_time = time.time()
+        
+        # Load the latest encodings on each frame processing to handle newly added faces
+        known_encodings, known_names = load_encodings(FACES_DIR)
 
-                    # Log to terminal
-                    print(f"Recorded Attendance for {name} at {attendance_data['Timestamp']}")
+        # Resize frame dynamically (optional based on your needs)
+        resized_frame = cv2.resize(frame_to_process, (640, 480))
 
-                    # Emit alert to frontend
-                    socketio.emit('attendance_captured_live', {
-                        'name': name,
-                        'timestamp': attendance_data["Timestamp"]
-                    })
+        # Check if enough time has passed to process the next frame
+        if current_time - last_processed_time < frame_interval:
+            continue
+        
+        last_processed_time = current_time
 
-            # Draw the bounding box and name with match percentage
-            top, right, bottom, left = face_location
-            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(frame, f"{name} ({match_percentage:.2f}%)", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        # Process the frame for faces (face recognition + attendance logging)
+        processed_frame, recognized_faces = process_faces(resized_frame, known_encodings, known_names)
 
-        # Encode the frame and send to client
-        _, buffer = cv2.imencode('.jpg', frame)
+        # Yield the processed frame to the client
+        _, buffer = cv2.imencode('.jpg', processed_frame)
         frame_data = buffer.tobytes()
+        
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n\r\n')
 
-    capture.release()
+def generate_frames_pantry():
+    logging.info(f"{threading.current_thread().name} started - Pantry feed processing")
+    last_processed_time = time.time()
+
+    while True:
+        capture_1 = cv2.VideoCapture(URL_PANTRY)
+        ret_1, frame_1 = capture_1.read()
+        capture_1.release()
+
+        if ret_1:
+            with frame_lock:
+                frame_data["pantry"]["frame"] = frame_1
+                frame_data["pantry"]["available"] = True
+                known_encodings, known_names = load_encodings(FACES_DIR)
+                processed_frame_1, _ = process_faces(frame_1, known_encodings, known_names,method='Pantry')
+
+        current_time = time.time()
+
+        if current_time - last_processed_time >= frame_interval:
+            last_processed_time = current_time
+
+            _, buffer_1 = cv2.imencode('.jpg', processed_frame_1) if processed_frame_1 is not None else (None, None)
+            frame_data_1 = buffer_1.tobytes() if buffer_1 is not None else None
+
+            # Flush the log immediately after processing
+            logging.getLogger().handlers[0].flush()
+        
+            yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame_data_1 + b'\r\n\r\n')
+        else:
+            time.sleep(1)
+
+def generate_frames_sales():
+    logging.info(f"{threading.current_thread().name} started - Sales feed processing")
+
+    last_processed_time = time.time()
+
+    while True:
+        capture_2 = cv2.VideoCapture(URL_SALES)
+        ret_2, frame_2 = capture_2.read()
+        capture_2.release()
+
+        if ret_2:
+            with frame_lock:
+                frame_data["sales"]["frame"] = frame_2
+                frame_data["sales"]["available"] = True
+                known_encodings, known_names = load_encodings(FACES_DIR)
+                processed_frame_2, _ = process_faces(frame_2, known_encodings, known_names,method='Sales')
+
+        current_time = time.time()
+
+        if current_time - last_processed_time >= frame_interval:
+            last_processed_time = current_time
+
+            _, buffer_2 = cv2.imencode('.jpg', processed_frame_2) if processed_frame_2 is not None else (None, None)
+            frame_data_2 = buffer_2.tobytes() if buffer_2 is not None else None
+            
+            # Flush the log immediately after processing
+            logging.getLogger().handlers[0].flush()
+
+            yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame_data_2 + b'\r\n\r\n')
+        else:
+            time.sleep(1)
+
+# Function to capture and process frames from Camera 3
+def generate_frames_hr():
+    logging.info(f"{threading.current_thread().name} started - HR feed processing")
+
+    last_processed_time = time.time()
+
+    while True:
+        capture_3 = cv2.VideoCapture(URL_HR)
+        ret_3, frame_3 = capture_3.read()
+        capture_3.release()
+
+        if ret_3:
+            with frame_lock:
+                frame_data["hr"]["frame"] = frame_3
+                frame_data["hr"]["available"] = True
+                known_encodings, known_names = load_encodings(FACES_DIR)
+                processed_frame_3, _ = process_faces(frame_3, known_encodings, known_names,method='HR')
+
+        current_time = time.time()
+
+        if current_time - last_processed_time >= frame_interval:
+            last_processed_time = current_time
+
+            _, buffer_3 = cv2.imencode('.jpg', processed_frame_3) if processed_frame_3 is not None else (None, None)
+            frame_data_3 = buffer_3.tobytes() if buffer_3 is not None else None
+            
+            # Flush the log immediately after processing
+            logging.getLogger().handlers[0].flush()
+
+            yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame_data_3 + b'\r\n\r\n')
+        else:
+            time.sleep(1)
+
+def generate_frames_pantry_thread(frame_data):
+    logging.info(f"{threading.current_thread().name} started - Pantry feed processing")
+    capture_1 = cv2.VideoCapture(URL_PANTRY)  # Open the capture once
+
+    if not capture_1.isOpened():
+        logging.error("Failed to open camera stream for Pantry")
+        return
+
+    last_processed_time = time.time()
+
+    while True:
+        current_time = time.time()
+        
+        if current_time - last_processed_time >= frame_interval:
+            ret_1, frame_1 = capture_1.read()
+
+            if ret_1:
+                with frame_lock:  # Use the lock when updating the shared frame data
+                    # Update the shared frame data with the captured frame
+                    frame_data["pantry"]["frame"] = frame_1
+                    frame_data["pantry"]["available"] = True
+                    known_encodings, known_names = load_encodings(FACES_DIR)
+                    processed_frame_1, _ = process_faces(frame_1, known_encodings, known_names,method='Pantry thread')
+            
+            last_processed_time = current_time  # Update last processed time
+        else:
+            time.sleep(0.1)  # Sleep for a small period to avoid high CPU usage
+
+    capture_1.release()  # Release the capture when done
+
+
+
+def generate_frames_sales_thread(frame_data):
+    logging.info(f"{threading.current_thread().name} started - Sales feed processing")
+    capture_2 = cv2.VideoCapture(URL_SALES)  # Open the capture once
+
+    if not capture_2.isOpened():
+        logging.error("Failed to open camera stream for Sales")
+        return
+
+    last_processed_time = time.time()
+
+    while True:
+        current_time = time.time()
+        
+        if current_time - last_processed_time >= frame_interval:
+            ret_2, frame_2 = capture_2.read()
+
+            if ret_2:
+                with frame_lock:  # Use the lock when updating the shared frame data
+                    # Update the shared frame data with the captured frame
+                    frame_data["sales"]["frame"] = frame_2
+                    frame_data["sales"]["available"] = True
+                    known_encodings, known_names = load_encodings(FACES_DIR)
+                    processed_frame_2, _ = process_faces(frame_2, known_encodings, known_names,method='Sales thread')
+            
+            last_processed_time = current_time  # Update last processed time
+        else:
+            time.sleep(0.1)  # Sleep for a small period to avoid high CPU usage
+
+    capture_2.release()  # Release the capture when done
+
+
+# Function to capture and process frames from Camera 3
+def generate_frames_hr_thread(frame_data):
+    logging.info(f"{threading.current_thread().name} started - HR feed processing")
+    capture_3 = cv2.VideoCapture(URL_HR)  # Open the capture once
+
+    if not capture_3.isOpened():
+        logging.error("Failed to open camera stream for HR")
+        return
+
+    last_processed_time = time.time()
+
+    while True:
+        current_time = time.time()
+        
+        if current_time - last_processed_time >= frame_interval:
+            ret_3, frame_3 = capture_3.read()
+
+            if ret_3:
+                with frame_lock:  # Use the lock when updating the shared frame data
+                    # Update the shared frame data with the captured frame
+                    frame_data["hr"]["frame"] = frame_3
+                    frame_data["hr"]["available"] = True
+                    known_encodings, known_names = load_encodings(FACES_DIR)
+                    processed_frame_3, _ = process_faces(frame_3, known_encodings, known_names,method='Hr thread')
+            
+            last_processed_time = current_time  # Update last processed time
+        else:
+            time.sleep(0.1)  # Sleep for a small period to avoid high CPU usage
+
+    capture_3.release()  # Release the capture when done
+
+            
+def start_threads():
+    # Pass the shared frame_data object to each thread
+    pantry_thread = threading.Thread(target=generate_frames_pantry_thread, args=(frame_data,), daemon=True)
+    pantry_thread.start()
+    logging.info(f"{pantry_thread.name} started")
+
+    # sales_thread = threading.Thread(target=generate_frames_sales_thread, args=(frame_data,), daemon=True)
+    # sales_thread.start()
+    # logging.info(f"{sales_thread.name} started")
+
+    # hr_thread = threading.Thread(target=generate_frames_hr_thread, args=(frame_data,), daemon=True)
+    # hr_thread.start()
+    # logging.info(f"{hr_thread.name} started")
+
+@app.route('/clear-attendance', methods=['GET'])
+def clear_attendance():
+    try:
+        # Check if the attendance file exists
+        if os.path.exists(ATTENDANCE_FILE):
+            # Open the file in write mode to clear the content
+            with open(ATTENDANCE_FILE, 'w') as file:
+                file.truncate(0)  # Clear the file content
+
+            return jsonify({"message": "Attendance data cleared successfully!"}), 200
+        else:
+            return jsonify({"message": "Attendance file does not exist!"}), 404
+    except Exception as e:
+        # Handle any unexpected errors
+        return jsonify({"message": f"Error: {str(e)}"}), 500
+
+
+
+@app.route('/video-feed-pantry')
+def video_feed_pantry():
+    return Response(generate_frames_pantry(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video-feed-sales')
+def video_feed_sales():
+    return Response(generate_frames_sales(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video-feed-hr')
+def video_feed_hr():
+    return Response(generate_frames_hr(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
 
 @app.route('/video-feed')
 def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
+    return render_template('all_frames.html')
+    # return Response(generate_frames_pantry(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @socketio.on('video_frame')
 def handle_video_frame(data):
@@ -258,7 +590,7 @@ def view_attendance():
     try:
         # Load attendance data from CSV
         if os.path.exists(ATTENDANCE_FILE):
-            attendance_data = pd.read_csv(ATTENDANCE_FILE, header=None, names=["Timestamp", "Name", "Method"])
+            attendance_data = pd.read_csv(ATTENDANCE_FILE, header=None, names=["Timestamp", "Name","Percentage", "Method"])
             records = attendance_data.to_dict(orient='records')  # Convert to list of dictionaries
         else:
             records = []  # Empty if the file doesn't exist
@@ -268,5 +600,10 @@ def view_attendance():
 
     return render_template('view_attendance.html', records=records)
 
+
+
 if __name__ == '__main__':
-    socketio.run(app, debug=True,allow_unsafe_werkzeug=True)
+
+    start_threads()
+    # generate_frames()
+    socketio.run(app, debug=False,allow_unsafe_werkzeug=True)

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Camera Feeds</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            margin-top: 50px;
+        }
+        h1 {
+            text-align: center;
+        }
+        .camera-container {
+            display: flex;
+            justify-content: space-between;
+            width: 90%;
+            margin-top: 20px;
+            flex-wrap: wrap;  /* To handle responsiveness */
+            gap: 20px;  /* Adds space between the images */
+        }
+        .camera-container img {
+            width: 100%;
+            max-width: 600px;  /* Maximum width for each image */
+            height: auto;
+            border: 3px solid #000;
+        }
+        .camera-container div {
+            text-align: center;
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Live Camera Feeds</h1>
+    <div class="camera-container">
+        <!-- Display Pantry Feed -->
+        <div>
+            <h2>Pantry Camera</h2>
+            <img src="{{ url_for('video_feed_pantry') }}" alt="Pantry Camera Feed" />
+        </div>
+
+        <!-- Display Sales Feed -->
+        <div>
+            <h2>Sales Camera</h2>
+            <img src="{{ url_for('video_feed_sales') }}" alt="Sales Camera Feed" />
+        </div>
+
+        <!-- Display HR Feed -->
+        <div>
+            <h2>HR Camera</h2>
+            <img src="{{ url_for('video_feed_hr') }}" alt="HR Camera Feed" />
+        </div>
+    </div>
+
+</body>
+</html>
