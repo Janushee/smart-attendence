@@ -2,4 +2,6 @@ myenv
 venv
 faces
 .env
+.idea/
+__pycache__/
 attendance.csv
